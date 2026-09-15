@@ -467,42 +467,71 @@ async function handleGoogleCredential(response){
 
 function authorizeThroughBackend(credential){
 
+  /*
+   * =====================================================
+   * V11 AUTHENTICATION FIX
+   * =====================================================
+   *
+   * PURPOSE:
+   *
+   * V10 used a hidden iframe + window.postMessage().
+   * Chrome's cross-origin opener policy caused the browser
+   * to block that communication, producing:
+   *
+   *   "Authorization timed out."
+   *
+   * V11 removes the iframe and postMessage bridge.
+   *
+   * The browser loads a one-time Apps Script JavaScript
+   * response through a dynamically-created <script>.
+   *
+   * SECURITY:
+   *   - ATD_SECRET is NOT in the frontend.
+   *   - ALLOWED_GOOGLE_EMAIL is NOT in the frontend.
+   *   - GOOGLE_CLIENT_ID is public and may remain here.
+   *   - The Google ID token is verified by Code.gs.
+   *   - The authorization proof is created only by Code.gs.
+   *
+   * =====================================================
+   */
+
   return new Promise(function(resolve,reject){
 
-    const frame =
-      document.createElement("iframe");
+    if(!credential){
+      reject(
+        new Error(
+          "Google authentication credential is missing."
+        )
+      );
+      return;
+    }
 
-    frame.style.position="fixed";
-    frame.style.width="1px";
-    frame.style.height="1px";
-    frame.style.left="-10000px";
-    frame.style.top="-10000px";
-    frame.style.border="0";
-    frame.setAttribute("aria-hidden","true");
+    const callbackName =
+      "atdAuthCallback_" +
+      Date.now() +
+      "_" +
+      Math.random().toString(36).slice(2);
 
-    frame.src =
-      DELIVERY_CONFIG.webAppUrl +
-      "?mode=authbridge";
+    const script =
+      document.createElement("script");
 
     let finished=false;
 
-    const cleanup=function(){
+    function cleanup(){
 
-      window.removeEventListener(
-        "message",
-        onMessage
-      );
-
-      if(
-        frame &&
-        frame.parentNode
-      ){
-        frame.parentNode.removeChild(frame);
+      if(script && script.parentNode){
+        script.parentNode.removeChild(script);
       }
 
-    };
+      try{
+        delete window[callbackName];
+      }catch(_){
+        window[callbackName]=undefined;
+      }
 
-    const finish=function(result){
+    }
+
+    function finish(result){
 
       if(finished) return;
 
@@ -510,9 +539,9 @@ function authorizeThroughBackend(credential){
       cleanup();
       resolve(result);
 
-    };
+    }
 
-    const fail=function(error){
+    function fail(error){
 
       if(finished) return;
 
@@ -520,63 +549,59 @@ function authorizeThroughBackend(credential){
       cleanup();
       reject(error);
 
+    }
+
+    /*
+     * Code.gs returns:
+     *
+     *   atdAuthCallback_xxx({...});
+     *
+     * No iframe or window.postMessage() is involved.
+     */
+
+    window[callbackName]=function(result){
+      finish(result);
     };
 
-    const onMessage=function(event){
-
-      const data =
-        event &&
-        event.data;
-
-      if(
-        !data ||
-        data.type!=="ATD_AUTH_RESULT"
-      ){
-        return;
-      }
-
-      finish(
-        data.result
-      );
-
-    };
-
-    window.addEventListener(
-      "message",
-      onMessage
-    );
-
-    frame.onload=function(){
-
-      try{
-
-        frame.contentWindow.postMessage(
-          {
-            type:"ATD_AUTH_REQUEST",
-            credential:credential
-          },
-          "*"
-        );
-
-      }catch(error){
-
-        fail(error);
-
-      }
-
-    };
-
-    frame.onerror=function(){
+    script.onerror=function(){
 
       fail(
         new Error(
-          "Authorization bridge could not be loaded."
+          "Authorization server could not be reached."
         )
       );
 
     };
 
-    document.body.appendChild(frame);
+    const params =
+      new URLSearchParams();
+
+    params.set(
+      "mode",
+      "auth"
+    );
+
+    params.set(
+      "callback",
+      callbackName
+    );
+
+    params.set(
+      "googleCredential",
+      credential
+    );
+
+    script.src =
+      DELIVERY_CONFIG.webAppUrl +
+      "?" +
+      params.toString();
+
+    document.head.appendChild(script);
+
+    /*
+     * Safety timeout only.
+     * Normal authorization should return well before this.
+     */
 
     setTimeout(function(){
 
@@ -584,18 +609,17 @@ function authorizeThroughBackend(credential){
 
         fail(
           new Error(
-            "Authorization timed out."
+            "Authorization server timed out."
           )
         );
 
       }
 
-    },15000);
+    },20000);
 
   });
 
 }
-
 function showGoogleLoginError(message){
   const el=document.getElementById("googleLoginError");
   if(el) el.textContent=message;
