@@ -298,7 +298,6 @@ const GOOGLE_CLIENT_ID =
 
 
 let googleAuthenticated = false;
-let googleUser = null;
 let googleCredential = null;
 window.__ATD_AUTH_PROOF = "";
 
@@ -327,26 +326,6 @@ function loadGoogleIdentityServices(){
   });
 }
 
-function decodeGoogleJwt(token){
-  try{
-    const parts=String(token||"").split(".");
-    if(parts.length!==3) throw new Error("Invalid Google credential.");
-
-    const base64=parts[1].replace(/-/g,"+").replace(/_/g,"/");
-    const padded=base64+"=".repeat((4-base64.length%4)%4);
-    const json=decodeURIComponent(
-      atob(padded)
-        .split("")
-        .map(c=>"%"+("00"+c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
-    );
-    return JSON.parse(json);
-  }catch(err){
-    console.error("Google token decode error:",err);
-    return null;
-  }
-}
-
 async function handleGoogleCredential(response){
 
   /*
@@ -363,6 +342,8 @@ async function handleGoogleCredential(response){
    *
    * The form is unlocked only after the backend returns
    * authorized=true.
+   * The frontend does not store or log the authenticated
+   * email address.
    * =====================================================
    */
 
@@ -377,33 +358,6 @@ async function handleGoogleCredential(response){
 
     showGoogleLoginError(
       "Google sign-in failed. Please try again."
-    );
-
-    return;
-  }
-
-  const user =
-    decodeGoogleJwt(
-      credential
-    );
-
-  if(!user){
-
-    showGoogleLoginError(
-      "Google sign-in failed. Please try again."
-    );
-
-    return;
-  }
-
-  if(
-    String(
-      user.email_verified
-    ).toLowerCase() !== "true"
-  ){
-
-    showGoogleLoginError(
-      "The Google account email could not be verified."
     );
 
     return;
@@ -430,7 +384,6 @@ async function handleGoogleCredential(response){
     }
 
     googleAuthenticated=true;
-    googleUser=user;
     googleCredential=credential;
     window.__ATD_AUTH_PROOF=proof.proof;
 
@@ -454,7 +407,6 @@ async function handleGoogleCredential(response){
     );
 
     googleAuthenticated=false;
-    googleUser=null;
     googleCredential=null;
     window.__ATD_AUTH_PROOF="";
 
@@ -486,8 +438,7 @@ function authorizeThroughBackend(credential){
    * response through a dynamically-created <script>.
    *
    * SECURITY:
-   *   - ATD_SECRET is NOT in the frontend.
-   *   - ALLOWED_GOOGLE_EMAIL is NOT in the frontend.
+   *   - Server secrets and authorized email are NOT in the frontend.
    *   - GOOGLE_CLIENT_ID is public and may remain here.
    *   - The Google ID token is verified by Code.gs.
    *   - The authorization proof is created only by Code.gs.
@@ -735,7 +686,6 @@ function unlockServiceReport(){
   document.body.classList.remove("atd-auth-locked");
   const overlay=document.getElementById("googleLoginOverlay");
   if(overlay) overlay.remove();
-  console.log("AutomationTodayCA authenticated:",googleUser && googleUser.email);
 }
 
 function checkGoogleSession(){
@@ -748,7 +698,6 @@ function checkGoogleSession(){
    */
 
   googleAuthenticated=false;
-  googleUser=null;
   googleCredential=null;
   window.__ATD_AUTH_PROOF="";
 
@@ -795,7 +744,6 @@ function googleLogout(){
   sessionStorage.removeItem("atd_google_email");
   sessionStorage.removeItem("atd_google_name");
   googleAuthenticated=false;
-  googleUser=null;
   googleCredential=null;
   window.__ATD_AUTH_PROOF="";
   location.reload();
