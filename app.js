@@ -18,7 +18,7 @@ const $=s=>document.querySelector(s);
 
 // Google Apps Script Web App endpoint. Paste the deployed /exec URL here after deployment.
 const DELIVERY_CONFIG={
-  webAppUrl:"https://script.google.com/macros/s/AKfycbx1sno8dbjjgdaV8P-znggJRIfXQ7RRUboVDaPI_XVKW6GE07R5Otb-98Ezbk5IvaSS-w/exec"
+  webAppUrl:"https://script.google.com/macros/s/AKfycbwfczh-MvsK32iZKLIUlN56YyOC-gca5LGmLlIE8s8b-yTuVvwfDocXt74xaZUChyop/exec"
 };
 let counter=Number(localStorage.getItem("atd_service_counter")||"1");
 const reportNo=()=>`SR_ATD_22AD0005${String(counter).padStart(3,"0")}`;
@@ -262,7 +262,9 @@ async function deliverReport(o){
    const dataUri=await generatePDF(false);
    if(!dataUri) throw new Error("PDF generation failed");
    const pdfBase64=dataUri.split(",")[1];
-   const payload={googleCredential:window.__ATD_GOOGLE_CREDENTIAL || "",
+   const payload={
+     googleCredential,
+     authorizationProof:window.__ATD_AUTH_PROOF||"",
      reportNo:o.reportNo,
      customerEmail:o.email,
      company:o.company,
@@ -294,35 +296,11 @@ function downloadData(){generatePDF(true);}
 const GOOGLE_CLIENT_ID =
   "246009211153-kqkpn2d35ebrgu5osa1l12i8tt4rhd21.apps.googleusercontent.com";
 
-/*
- * FRONTEND ACCESS GATE
- * --------------------
- * PURPOSE:
- * - The GitHub Pages site is public, so the HTML/JS itself cannot be
- *   made private by JavaScript.
- * - The Service Report form must NOT be unlocked for an unauthorized
- *   Google account.
- * - The authorized email is NOT stored in plaintext in this public file.
- * - The backend remains the final security authority and independently
- *   verifies the Google ID token against ALLOWED_GOOGLE_EMAIL in
- *   Apps Script Script Properties.
- */
-const AUTHORIZED_GOOGLE_EMAIL_SHA256 =
-  "fbbbfa1f910567680a65bc0d5da9516f39bec9cd6e94bfd11687fd4dbd46bd75";
 
 let googleAuthenticated = false;
 let googleUser = null;
 let googleCredential = null;
-
-async function sha256Hex_(value){
-  const data = new TextEncoder().encode(
-    String(value || "").trim().toLowerCase()
-  );
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map(b => b.toString(16).padStart(2,"0"))
-    .join("");
-}
+window.__ATD_AUTH_PROOF = "";
 
 function loadGoogleIdentityServices(){
   return new Promise((resolve,reject)=>{
@@ -372,65 +350,250 @@ function decodeGoogleJwt(token){
 async function handleGoogleCredential(response){
 
   /*
-   * SECURITY PURPOSE:
-   * A successful Google sign-in is NOT enough to unlock this application.
-   * The signed-in email must also match the authorized account.
+   * =====================================================
+   * V10 ACCESS CONTROL
+   * =====================================================
+   * PURPOSE:
+   * This public JavaScript does NOT contain the authorized
+   * account, company email, or server secret.
    *
-   * The email is compared against a SHA-256 digest so the authorized
-   * email address is not published in this public GitHub repository.
+   * The Google ID token is sent to an Apps Script
+   * authentication bridge. The backend decides whether the
+   * account is authorized.
    *
-   * The backend performs the authoritative verification again when
-   * a report is submitted.
+   * The form is unlocked only after the backend returns
+   * authorized=true.
+   * =====================================================
    */
 
-  const user=decodeGoogleJwt(response && response.credential);
+  const credential =
+    String(
+      response &&
+      response.credential ||
+      ""
+    ).trim();
 
-  if(!user){
-    showGoogleLoginError("Google sign-in failed. Please try again.");
-    return;
-  }
-
-  const email=String(user.email||"").trim().toLowerCase();
-
-  if(user.email_verified!==true){
-    showGoogleLoginError("The Google account email could not be verified.");
-    return;
-  }
-
-  const emailHash=await sha256Hex_(email);
-
-  if(emailHash!==AUTHORIZED_GOOGLE_EMAIL_SHA256){
-
-    googleAuthenticated=false;
-    googleUser=null;
-    googleCredential=null;
-    window.__ATD_GOOGLE_CREDENTIAL = "";
-
-    sessionStorage.removeItem("atd_google_authenticated");
-    sessionStorage.removeItem("atd_google_email");
-    sessionStorage.removeItem("atd_google_name");
+  if(!credential){
 
     showGoogleLoginError(
-      "This Google account is not authorized to access AutomationTodayCA Service Report."
+      "Google sign-in failed. Please try again."
     );
 
     return;
   }
 
-  googleAuthenticated=true;
-  googleUser=user;
-  googleCredential=response.credential;
-  window.__ATD_GOOGLE_CREDENTIAL = response.credential;
+  const user =
+    decodeGoogleJwt(
+      credential
+    );
 
-  /*
-   * Do not persist authentication in sessionStorage.
-   * The credential stays in memory only.
-   */
-  sessionStorage.removeItem("atd_google_authenticated");
-  sessionStorage.removeItem("atd_google_email");
-  sessionStorage.removeItem("atd_google_name");
+  if(!user){
 
-  unlockServiceReport();
+    showGoogleLoginError(
+      "Google sign-in failed. Please try again."
+    );
+
+    return;
+  }
+
+  if(
+    String(
+      user.email_verified
+    ).toLowerCase() !== "true"
+  ){
+
+    showGoogleLoginError(
+      "The Google account email could not be verified."
+    );
+
+    return;
+  }
+
+  try{
+
+    const proof =
+      await authorizeThroughBackend(
+        credential
+      );
+
+    if(
+      !proof ||
+      proof.ok!==true ||
+      proof.authorized!==true ||
+      !proof.proof
+    ){
+
+      throw new Error(
+        "Access denied."
+      );
+
+    }
+
+    googleAuthenticated=true;
+    googleUser=user;
+    googleCredential=credential;
+    window.__ATD_AUTH_PROOF=proof.proof;
+
+    sessionStorage.removeItem(
+      "atd_google_authenticated"
+    );
+    sessionStorage.removeItem(
+      "atd_google_email"
+    );
+    sessionStorage.removeItem(
+      "atd_google_name"
+    );
+
+    unlockServiceReport();
+
+  }catch(err){
+
+    console.error(
+      "AutomationTodayCA authorization failed:",
+      err
+    );
+
+    googleAuthenticated=false;
+    googleUser=null;
+    googleCredential=null;
+    window.__ATD_AUTH_PROOF="";
+
+    showGoogleLoginError(
+      "Access denied. This Google account is not authorized."
+    );
+
+  }
+}
+
+function authorizeThroughBackend(credential){
+
+  return new Promise(function(resolve,reject){
+
+    const frame =
+      document.createElement("iframe");
+
+    frame.style.position="fixed";
+    frame.style.width="1px";
+    frame.style.height="1px";
+    frame.style.left="-10000px";
+    frame.style.top="-10000px";
+    frame.style.border="0";
+    frame.setAttribute("aria-hidden","true");
+
+    frame.src =
+      DELIVERY_CONFIG.webAppUrl +
+      "?mode=authbridge";
+
+    let finished=false;
+
+    const cleanup=function(){
+
+      window.removeEventListener(
+        "message",
+        onMessage
+      );
+
+      if(
+        frame &&
+        frame.parentNode
+      ){
+        frame.parentNode.removeChild(frame);
+      }
+
+    };
+
+    const finish=function(result){
+
+      if(finished) return;
+
+      finished=true;
+      cleanup();
+      resolve(result);
+
+    };
+
+    const fail=function(error){
+
+      if(finished) return;
+
+      finished=true;
+      cleanup();
+      reject(error);
+
+    };
+
+    const onMessage=function(event){
+
+      const data =
+        event &&
+        event.data;
+
+      if(
+        !data ||
+        data.type!=="ATD_AUTH_RESULT"
+      ){
+        return;
+      }
+
+      finish(
+        data.result
+      );
+
+    };
+
+    window.addEventListener(
+      "message",
+      onMessage
+    );
+
+    frame.onload=function(){
+
+      try{
+
+        frame.contentWindow.postMessage(
+          {
+            type:"ATD_AUTH_REQUEST",
+            credential:credential
+          },
+          "*"
+        );
+
+      }catch(error){
+
+        fail(error);
+
+      }
+
+    };
+
+    frame.onerror=function(){
+
+      fail(
+        new Error(
+          "Authorization bridge could not be loaded."
+        )
+      );
+
+    };
+
+    document.body.appendChild(frame);
+
+    setTimeout(function(){
+
+      if(!finished){
+
+        fail(
+          new Error(
+            "Authorization timed out."
+          )
+        );
+
+      }
+
+    },15000);
+
+  });
+
 }
 
 function showGoogleLoginError(message){
@@ -555,17 +718,15 @@ function checkGoogleSession(){
 
   /*
    * SECURITY PURPOSE:
-   * Never unlock the application from sessionStorage/localStorage.
-   * Those values are controlled by the browser and are not proof of
-   * Google authentication.
-   *
-   * Every page load starts locked and requires a fresh Google
-   * credential. The backend independently verifies that credential.
+   * Browser storage is never accepted as proof of access.
+   * Every page load starts locked and requires fresh Google
+   * authentication plus server authorization.
    */
 
   googleAuthenticated=false;
   googleUser=null;
   googleCredential=null;
+  window.__ATD_AUTH_PROOF="";
 
   sessionStorage.removeItem("atd_google_authenticated");
   sessionStorage.removeItem("atd_google_email");
@@ -611,6 +772,8 @@ function googleLogout(){
   sessionStorage.removeItem("atd_google_name");
   googleAuthenticated=false;
   googleUser=null;
+  googleCredential=null;
+  window.__ATD_AUTH_PROOF="";
   location.reload();
 }
 
