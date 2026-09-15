@@ -294,8 +294,35 @@ function downloadData(){generatePDF(true);}
 const GOOGLE_CLIENT_ID =
   "246009211153-kqkpn2d35ebrgu5osa1l12i8tt4rhd21.apps.googleusercontent.com";
 
+/*
+ * FRONTEND ACCESS GATE
+ * --------------------
+ * PURPOSE:
+ * - The GitHub Pages site is public, so the HTML/JS itself cannot be
+ *   made private by JavaScript.
+ * - The Service Report form must NOT be unlocked for an unauthorized
+ *   Google account.
+ * - The authorized email is NOT stored in plaintext in this public file.
+ * - The backend remains the final security authority and independently
+ *   verifies the Google ID token against ALLOWED_GOOGLE_EMAIL in
+ *   Apps Script Script Properties.
+ */
+const AUTHORIZED_GOOGLE_EMAIL_SHA256 =
+  "fbbbfa1f910567680a65bc0d5da9516f39bec9cd6e94bfd11687fd4dbd46bd75";
+
 let googleAuthenticated = false;
 let googleUser = null;
+let googleCredential = null;
+
+async function sha256Hex_(value){
+  const data = new TextEncoder().encode(
+    String(value || "").trim().toLowerCase()
+  );
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2,"0"))
+    .join("");
+}
 
 function loadGoogleIdentityServices(){
   return new Promise((resolve,reject)=>{
@@ -342,7 +369,20 @@ function decodeGoogleJwt(token){
   }
 }
 
-function handleGoogleCredential(response){
+async function handleGoogleCredential(response){
+
+  /*
+   * SECURITY PURPOSE:
+   * A successful Google sign-in is NOT enough to unlock this application.
+   * The signed-in email must also match the authorized account.
+   *
+   * The email is compared against a SHA-256 digest so the authorized
+   * email address is not published in this public GitHub repository.
+   *
+   * The backend performs the authoritative verification again when
+   * a report is submitted.
+   */
+
   const user=decodeGoogleJwt(response && response.credential);
 
   if(!user){
@@ -357,20 +397,38 @@ function handleGoogleCredential(response){
     return;
   }
 
-  /*
-   * SECURITY PURPOSE:
-   * The Service Report UI is unlocked only after a real
-   * Google credential has been received and decoded.
-   * The credential is also retained in memory so the
-   * Apps Script backend can independently verify it.
-   */
+  const emailHash=await sha256Hex_(email);
+
+  if(emailHash!==AUTHORIZED_GOOGLE_EMAIL_SHA256){
+
+    googleAuthenticated=false;
+    googleUser=null;
+    googleCredential=null;
+    window.__ATD_GOOGLE_CREDENTIAL = "";
+
+    sessionStorage.removeItem("atd_google_authenticated");
+    sessionStorage.removeItem("atd_google_email");
+    sessionStorage.removeItem("atd_google_name");
+
+    showGoogleLoginError(
+      "This Google account is not authorized to access AutomationTodayCA Service Report."
+    );
+
+    return;
+  }
+
   googleAuthenticated=true;
   googleUser=user;
+  googleCredential=response.credential;
   window.__ATD_GOOGLE_CREDENTIAL = response.credential;
 
-  sessionStorage.setItem("atd_google_authenticated","true");
-  sessionStorage.setItem("atd_google_email",email);
-  sessionStorage.setItem("atd_google_name",user.name||"");
+  /*
+   * Do not persist authentication in sessionStorage.
+   * The credential stays in memory only.
+   */
+  sessionStorage.removeItem("atd_google_authenticated");
+  sessionStorage.removeItem("atd_google_email");
+  sessionStorage.removeItem("atd_google_name");
 
   unlockServiceReport();
 }
@@ -494,25 +552,20 @@ function unlockServiceReport(){
 }
 
 function checkGoogleSession(){
+
   /*
    * SECURITY PURPOSE:
-   * sessionStorage is NOT trusted as proof of authentication.
+   * Never unlock the application from sessionStorage/localStorage.
+   * Those values are controlled by the browser and are not proof of
+   * Google authentication.
    *
-   * A public GitHub Pages site can be opened by anyone, and
-   * sessionStorage can be created or modified locally.
-   *
-   * Therefore every fresh page load must start behind the
-   * Google Sign-In lock. The page is unlocked only after
-   * handleGoogleCredential() receives a real Google credential.
-   *
-   * The Apps Script backend remains the final security gate
-   * and independently verifies the Google ID token and the
-   * authorized email before processing a report.
+   * Every page load starts locked and requires a fresh Google
+   * credential. The backend independently verifies that credential.
    */
 
   googleAuthenticated=false;
   googleUser=null;
-  window.__ATD_GOOGLE_CREDENTIAL = "";
+  googleCredential=null;
 
   sessionStorage.removeItem("atd_google_authenticated");
   sessionStorage.removeItem("atd_google_email");
