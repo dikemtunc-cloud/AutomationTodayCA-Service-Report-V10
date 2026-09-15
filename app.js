@@ -18,7 +18,7 @@ const $=s=>document.querySelector(s);
 
 // Google Apps Script Web App endpoint. Paste the deployed /exec URL here after deployment.
 const DELIVERY_CONFIG={
-  webAppUrl:"https://script.google.com/macros/s/AKfycbx1sno8dbjjgdaV8P-znggJRIfXQ7RRUboVDaPI_XVKW6GE07R5Otb-98Ezbk5IvaSS-w/exec"
+  webAppUrl:"https://script.google.com/macros/s/AKfycbz_zRZrUkxkkVUUpq31_5ZdXXrGAEYS386z2IasjCYpje3DmHl1oJZRjIiE4GM8Cm2W/exec"
 };
 let counter=Number(localStorage.getItem("atd_service_counter")||"1");
 const reportNo=()=>`SR_ATD_22AD0005${String(counter).padStart(3,"0")}`;
@@ -351,18 +351,6 @@ function handleGoogleCredential(response){
   }
 
   const email=String(user.email||"").trim().toLowerCase();
-
-  if(true){
-    googleAuthenticated=false;
-    googleUser=null;
-    sessionStorage.removeItem("atd_google_authenticated");
-    sessionStorage.removeItem("atd_google_email");
-    sessionStorage.removeItem("atd_google_name");
-    showGoogleLoginError(
-      "Access denied. This Service Report application is restricted to the authorized AutomationTodayCA Google account."
-    );
-    return;
-  }
 
   if(user.email_verified!==true){
     showGoogleLoginError("The Google account email could not be verified.");
