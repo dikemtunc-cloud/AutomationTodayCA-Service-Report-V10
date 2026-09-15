@@ -357,6 +357,13 @@ function handleGoogleCredential(response){
     return;
   }
 
+  /*
+   * SECURITY PURPOSE:
+   * The Service Report UI is unlocked only after a real
+   * Google credential has been received and decoded.
+   * The credential is also retained in memory so the
+   * Apps Script backend can independently verify it.
+   */
   googleAuthenticated=true;
   googleUser=user;
   window.__ATD_GOOGLE_CREDENTIAL = response.credential;
@@ -487,22 +494,29 @@ function unlockServiceReport(){
 }
 
 function checkGoogleSession(){
-  const authenticated=sessionStorage.getItem("atd_google_authenticated");
-  const email=sessionStorage.getItem("atd_google_email");
+  /*
+   * SECURITY PURPOSE:
+   * sessionStorage is NOT trusted as proof of authentication.
+   *
+   * A public GitHub Pages site can be opened by anyone, and
+   * sessionStorage can be created or modified locally.
+   *
+   * Therefore every fresh page load must start behind the
+   * Google Sign-In lock. The page is unlocked only after
+   * handleGoogleCredential() receives a real Google credential.
+   *
+   * The Apps Script backend remains the final security gate
+   * and independently verifies the Google ID token and the
+   * authorized email before processing a report.
+   */
 
-  if(
-    authenticated==="true" &&
-    email &&
-    email
-  ){
-    googleAuthenticated=true;
-    googleUser={
-      email,
-      name:sessionStorage.getItem("atd_google_name")||""
-    };
-    unlockServiceReport();
-    return true;
-  }
+  googleAuthenticated=false;
+  googleUser=null;
+  window.__ATD_GOOGLE_CREDENTIAL = "";
+
+  sessionStorage.removeItem("atd_google_authenticated");
+  sessionStorage.removeItem("atd_google_email");
+  sessionStorage.removeItem("atd_google_name");
 
   return false;
 }
