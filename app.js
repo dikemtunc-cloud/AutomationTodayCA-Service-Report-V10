@@ -359,6 +359,7 @@ function handleGoogleCredential(response){
 
   googleAuthenticated=true;
   googleUser=user;
+  window.__ATD_GOOGLE_CREDENTIAL = response.credential;
 
   sessionStorage.setItem("atd_google_authenticated","true");
   sessionStorage.setItem("atd_google_email",email);
