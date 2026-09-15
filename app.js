@@ -289,179 +289,112 @@ function downloadData(){generatePDF(true);}
 
 
 /* =========================================================
-   GOOGLE SIGN-IN
-   AutomationTodayCA Service Report
+   GOOGLE SIGN-IN — V13
+   SERVER-AUTHORIZED / NO FRONTEND USER IDENTITY
    ========================================================= */
+
+/*
+ * SECURITY PURPOSE:
+ * - The Google Client ID is public configuration.
+ * - The Google ID token is sent to Apps Script.
+ * - Code.gs verifies the token and makes the authorization decision.
+ * - Code.gs returns a short-lived authorization proof.
+ * - Private server configuration is never embedded here.
+ * - The frontend does not decode, store, or log the user's Google
+ *   email/name.
+ *
+ * TRANSPORT:
+ * V13 uses the matching callback-script transport.
+ * No iframe and no window.postMessage() authentication bridge.
+ */
 
 const GOOGLE_CLIENT_ID =
   "246009211153-kqkpn2d35ebrgu5osa1l12i8tt4rhd21.apps.googleusercontent.com";
 
-
 let googleAuthenticated = false;
 let googleCredential = null;
+
 window.__ATD_AUTH_PROOF = "";
 
+
 function loadGoogleIdentityServices(){
+
   return new Promise((resolve,reject)=>{
-    if(window.google && window.google.accounts){
+
+    if(
+      window.google &&
+      window.google.accounts
+    ){
+
       resolve();
       return;
+
     }
 
-    const existing=document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+    const existing =
+      document.querySelector(
+        'script[src="https://accounts.google.com/gsi/client"]'
+      );
 
     if(existing){
-      existing.addEventListener("load",resolve,{once:true});
-      existing.addEventListener("error",reject,{once:true});
+
+      existing.addEventListener(
+        "load",
+        resolve,
+        {once:true}
+      );
+
+      existing.addEventListener(
+        "error",
+        reject,
+        {once:true}
+      );
+
       return;
+
     }
 
-    const script=document.createElement("script");
-    script.src="https://accounts.google.com/gsi/client";
+    const script =
+      document.createElement("script");
+
+    script.src =
+      "https://accounts.google.com/gsi/client";
+
     script.async=true;
     script.defer=true;
     script.onload=resolve;
     script.onerror=reject;
+
     document.head.appendChild(script);
+
   });
+
 }
 
-async function handleGoogleCredential(response){
-
-  /*
-   * =====================================================
-   * V10 ACCESS CONTROL
-   * =====================================================
-   * PURPOSE:
-   * This public JavaScript does NOT contain the authorized
-   * account, company email, or server secret.
-   *
-   * The Google ID token is sent to an Apps Script
-   * authentication bridge. The backend decides whether the
-   * account is authorized.
-   *
-   * The form is unlocked only after the backend returns
-   * authorized=true.
-   * The frontend does not store or log the authenticated
-   * email address.
-   * =====================================================
-   */
-
-  const credential =
-    String(
-      response &&
-      response.credential ||
-      ""
-    ).trim();
-
-  if(!credential){
-
-    showGoogleLoginError(
-      "Google sign-in failed. Please try again."
-    );
-
-    return;
-  }
-
-  try{
-
-    const proof =
-      await authorizeThroughBackend(
-        credential
-      );
-
-    if(
-      !proof ||
-      proof.ok!==true ||
-      proof.authorized!==true ||
-      !proof.proof
-    ){
-
-      throw new Error(
-        "Access denied."
-      );
-
-    }
-
-    googleAuthenticated=true;
-    googleCredential=credential;
-    window.__ATD_AUTH_PROOF=proof.proof;
-
-    sessionStorage.removeItem(
-      "atd_google_authenticated"
-    );
-    sessionStorage.removeItem(
-      "atd_google_email"
-    );
-    sessionStorage.removeItem(
-      "atd_google_name"
-    );
-
-    unlockServiceReport();
-
-  }catch(err){
-
-    console.error(
-      "AutomationTodayCA authorization failed:",
-      err
-    );
-
-    googleAuthenticated=false;
-    googleCredential=null;
-    window.__ATD_AUTH_PROOF="";
-
-    showGoogleLoginError(
-      "Access denied. This Google account is not authorized."
-    );
-
-  }
-}
 
 function authorizeThroughBackend(credential){
-
-  /*
-   * =====================================================
-   * V11 AUTHENTICATION FIX
-   * =====================================================
-   *
-   * PURPOSE:
-   *
-   * V10 used a hidden iframe + window.postMessage().
-   * Chrome's cross-origin opener policy caused the browser
-   * to block that communication, producing:
-   *
-   *   "Authorization timed out."
-   *
-   * V11 removes the iframe and postMessage bridge.
-   *
-   * The browser loads a one-time Apps Script JavaScript
-   * response through a dynamically-created <script>.
-   *
-   * SECURITY:
-   *   - Server secrets and authorized email are NOT in the frontend.
-   *   - GOOGLE_CLIENT_ID is public and may remain here.
-   *   - The Google ID token is verified by Code.gs.
-   *   - The authorization proof is created only by Code.gs.
-   *
-   * =====================================================
-   */
 
   return new Promise(function(resolve,reject){
 
     if(!credential){
+
       reject(
         new Error(
           "Google authentication credential is missing."
         )
       );
+
       return;
+
     }
 
     const callbackName =
       "atdAuthCallback_" +
       Date.now() +
       "_" +
-      Math.random().toString(36).slice(2);
+      Math.random()
+        .toString(36)
+        .slice(2);
 
     const script =
       document.createElement("script");
@@ -470,8 +403,15 @@ function authorizeThroughBackend(credential){
 
     function cleanup(){
 
-      if(script && script.parentNode){
-        script.parentNode.removeChild(script);
+      if(
+        script &&
+        script.parentNode
+      ){
+
+        script.parentNode.removeChild(
+          script
+        );
+
       }
 
       try{
@@ -501,14 +441,6 @@ function authorizeThroughBackend(credential){
       reject(error);
 
     }
-
-    /*
-     * Code.gs returns:
-     *
-     *   atdAuthCallback_xxx({...});
-     *
-     * No iframe or window.postMessage() is involved.
-     */
 
     window[callbackName]=function(result){
       finish(result);
@@ -547,12 +479,9 @@ function authorizeThroughBackend(credential){
       "?" +
       params.toString();
 
-    document.head.appendChild(script);
-
-    /*
-     * Safety timeout only.
-     * Normal authorization should return well before this.
-     */
+    document.head.appendChild(
+      script
+    );
 
     setTimeout(function(){
 
@@ -571,92 +500,204 @@ function authorizeThroughBackend(credential){
   });
 
 }
-function showGoogleLoginError(message){
-  const el=document.getElementById("googleLoginError");
-  if(el) el.textContent=message;
+
+
+async function handleGoogleCredential(response){
+
+  /*
+   * Do not decode the Google JWT in the frontend.
+   * The backend is the authority for access control.
+   */
+
+  const credential =
+    String(
+      response &&
+      response.credential ||
+      ""
+    ).trim();
+
+  if(!credential){
+
+    showGoogleLoginError(
+      "Google sign-in failed. Please try again."
+    );
+
+    return;
+
+  }
+
+  try{
+
+    const proof =
+      await authorizeThroughBackend(
+        credential
+      );
+
+    if(
+      !proof ||
+      proof.ok!==true ||
+      proof.authorized!==true ||
+      !proof.proof
+    ){
+
+      throw new Error(
+        "Access denied."
+      );
+
+    }
+
+    googleAuthenticated=true;
+    googleCredential=credential;
+    window.__ATD_AUTH_PROOF=proof.proof;
+
+    unlockServiceReport();
+
+  }catch(err){
+
+    console.error(
+      "AutomationTodayCA authorization failed:",
+      err
+    );
+
+    googleAuthenticated=false;
+    googleCredential=null;
+    window.__ATD_AUTH_PROOF="";
+
+    showGoogleLoginError(
+      "Access denied. This Google account is not authorized."
+    );
+
+  }
+
 }
 
-function createGoogleLoginScreen(){
-  if(document.getElementById("googleLoginOverlay")) return;
 
-  const overlay=document.createElement("div");
-  overlay.id="googleLoginOverlay";
+function showGoogleLoginError(message){
+
+  const el =
+    document.getElementById(
+      "googleLoginError"
+    );
+
+  if(el){
+    el.textContent=message;
+  }
+
+}
+
+
+function createGoogleLoginScreen(){
+
+  if(
+    document.getElementById(
+      "googleLoginOverlay"
+    )
+  ){
+    return;
+  }
+
+  const overlay =
+    document.createElement("div");
+
+  overlay.id =
+    "googleLoginOverlay";
+
   overlay.innerHTML=`
     <div class="atd-login-overlay">
       <div class="atd-login-card">
         <div class="atd-login-logo">
-          <img src="atd-logo.png" alt="AutomationTodayCA" onerror="this.style.display='none'">
+          <img src="atd-logo.png"
+               alt="AutomationTodayCA"
+               onerror="this.style.display='none'">
         </div>
-        <div class="atd-login-brand">AUTOMATIONTODAYCA</div>
-        <div class="atd-login-title">Service Report</div>
-        <div class="atd-login-subtitle">Authorized access only</div>
+
+        <div class="atd-login-title">
+          AutomationTodayCA Service Report
+        </div>
+
+        <div class="atd-login-subtitle">
+          Authorized access required
+        </div>
+
         <div id="googleLoginButton"></div>
-        <div class="atd-login-note">Sign in with your authorized Google account</div>
-        <div id="googleLoginError" role="alert"></div>
+
+        <div id="googleLoginError"
+             role="alert"
+             aria-live="polite"></div>
+
+        <div class="atd-login-note">
+          Sign in with your authorized Google account to continue.
+        </div>
       </div>
     </div>
   `;
 
-  document.body.appendChild(overlay);
+  document.body.appendChild(
+    overlay
+  );
 
-  const style=document.createElement("style");
-  style.id="atd-google-login-style";
+}
+
+
+function addGoogleLoginStyles(){
+
+  if(
+    document.getElementById(
+      "atdGoogleLoginStyles"
+    )
+  ){
+    return;
+  }
+
+  const style =
+    document.createElement("style");
+
+  style.id =
+    "atdGoogleLoginStyles";
+
   style.textContent=`
-    #googleLoginOverlay{
-      position:fixed;
-      inset:0;
-      z-index:999999;
-      visibility:visible !important;
-    }
     .atd-login-overlay{
       position:fixed;
       inset:0;
-      background:linear-gradient(135deg,#0f2b5b 0%,#173c78 52%,#eef2f6 100%);
+      z-index:999999;
       display:flex;
       align-items:center;
       justify-content:center;
-      padding:24px;
-      box-sizing:border-box;
+      background:rgba(15,23,42,.96);
     }
+
     .atd-login-card{
-      width:min(430px,100%);
-      background:#fff;
+      width:min(440px,calc(100vw - 40px));
+      padding:34px;
       border-radius:16px;
-      padding:42px 38px;
+      background:#fff;
+      box-shadow:0 20px 60px rgba(0,0,0,.28);
       text-align:center;
-      box-shadow:0 25px 70px rgba(0,0,0,.28);
-      box-sizing:border-box;
     }
+
     .atd-login-logo{
-      height:64px;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      margin-bottom:10px;
+      min-height:48px;
+      margin-bottom:12px;
     }
+
     .atd-login-logo img{
-      max-height:64px;
-      max-width:190px;
-      object-fit:contain;
+      max-width:220px;
+      max-height:58px;
     }
-    .atd-login-brand{
-      color:#0f2b5b;
-      font-size:20px;
-      font-weight:800;
-      letter-spacing:.5px;
-      margin-bottom:16px;
-    }
+
     .atd-login-title{
-      color:#182536;
-      font-size:28px;
-      font-weight:800;
-      margin-bottom:6px;
+      color:#1f2937;
+      font-size:21px;
+      font-weight:700;
+      margin-bottom:8px;
     }
+
     .atd-login-subtitle{
       color:#718096;
       font-size:14px;
       margin-bottom:28px;
     }
+
     #googleLoginButton{
       min-height:44px;
       display:flex;
@@ -664,12 +705,14 @@ function createGoogleLoginScreen(){
       justify-content:center;
       margin:0 auto;
     }
+
     .atd-login-note{
       margin-top:20px;
       color:#8a95a5;
       font-size:12px;
       line-height:1.5;
     }
+
     #googleLoginError{
       color:#b42318;
       font-size:13px;
@@ -678,51 +721,98 @@ function createGoogleLoginScreen(){
       min-height:18px;
     }
   `;
-  document.head.appendChild(style);
+
+  document.head.appendChild(
+    style
+  );
+
 }
 
-function unlockServiceReport(){
-  googleAuthenticated=true;
-  document.body.classList.remove("atd-auth-locked");
-  const overlay=document.getElementById("googleLoginOverlay");
-  if(overlay) overlay.remove();
+
+function lockServiceReport(){
+
+  googleAuthenticated=false;
+
+  document.body.classList.add(
+    "atd-auth-locked"
+  );
+
 }
+
+
+function unlockServiceReport(){
+
+  googleAuthenticated=true;
+
+  document.body.classList.remove(
+    "atd-auth-locked"
+  );
+
+  const overlay =
+    document.getElementById(
+      "googleLoginOverlay"
+    );
+
+  if(overlay){
+    overlay.remove();
+  }
+
+}
+
 
 function checkGoogleSession(){
 
   /*
-   * SECURITY PURPOSE:
-   * Browser storage is never accepted as proof of access.
-   * Every page load starts locked and requires fresh Google
-   * authentication plus server authorization.
+   * SECURITY:
+   * Never trust browser storage as authorization.
+   * Every page load starts locked.
    */
 
   googleAuthenticated=false;
   googleCredential=null;
   window.__ATD_AUTH_PROOF="";
 
-  sessionStorage.removeItem("atd_google_authenticated");
-  sessionStorage.removeItem("atd_google_email");
-  sessionStorage.removeItem("atd_google_name");
+  sessionStorage.removeItem(
+    "atd_google_authenticated"
+  );
+
+  sessionStorage.removeItem(
+    "atd_google_email"
+  );
+
+  sessionStorage.removeItem(
+    "atd_google_name"
+  );
 
   return false;
+
 }
 
+
 async function startGoogleAuthentication(){
+
   createGoogleLoginScreen();
+  addGoogleLoginStyles();
 
   try{
+
     await loadGoogleIdentityServices();
 
     google.accounts.id.initialize({
+
       client_id:GOOGLE_CLIENT_ID,
       callback:handleGoogleCredential,
       auto_select:false,
       cancel_on_tap_outside:false
+
     });
 
     google.accounts.id.renderButton(
-      document.getElementById("googleLoginButton"),
+
+      document.getElementById(
+        "googleLoginButton"
+      ),
+
       {
         type:"standard",
         theme:"outline",
@@ -732,24 +822,49 @@ async function startGoogleAuthentication(){
         logo_alignment:"left",
         width:320
       }
+
     );
+
   }catch(err){
-    console.error("Google authentication initialization failed:",err);
-    showGoogleLoginError("Google Sign-In could not be initialized. Please refresh the page.");
+
+    console.error(
+      "Google authentication initialization failed:",
+      err
+    );
+
+    showGoogleLoginError(
+      "Google Sign-In could not be initialized. Please refresh the page."
+    );
+
   }
+
 }
 
+
 function googleLogout(){
-  sessionStorage.removeItem("atd_google_authenticated");
-  sessionStorage.removeItem("atd_google_email");
-  sessionStorage.removeItem("atd_google_name");
+
   googleAuthenticated=false;
   googleCredential=null;
   window.__ATD_AUTH_PROOF="";
+
+  sessionStorage.removeItem(
+    "atd_google_authenticated"
+  );
+
+  sessionStorage.removeItem(
+    "atd_google_email"
+  );
+
+  sessionStorage.removeItem(
+    "atd_google_name"
+  );
+
   location.reload();
+
 }
 
-/* Start authentication after the existing Service Report code has loaded. */
+
+/* Start authentication after the Service Report code has loaded. */
 if(!checkGoogleSession()){
   startGoogleAuthentication();
 }
